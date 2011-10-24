@@ -8,6 +8,7 @@ D3ITEMPAGE = '%s/d3/en/item/' % ROOTURL
 
 db = None
 basetime = 0
+directory = ''
 
 processes = []
 
@@ -35,6 +36,8 @@ re_itemsubcategoryalt = re.compile(r'<a.*?href="(?P<href>.*?)">(?P<subcategory>.
 #Process regexs
 re_itemsubcategoryaltdetails = re.compile(r'(?:<span class="item-class-specific">.*?>(?P<class>.*?)</a>.*?)?<div class="desc">(?P<desc>.*?)</div>', re.DOTALL)
 re_itemitem = re.compile(r'(?P<item><tr class="row[0-9].*?</tr>)', re.DOTALL)
+re_itempredetails = re.compile(r'href="(?P<item>.*?)".*?src="(?P<image>.*?)"', re.DOTALL)
+re_itemdetails = re.compile(r'<div class="detail-level">.*?<span>(?P<level>[0-9]+)</span>.*?<div class="detail-text">.*?<h2.*?>(?P<name>.*?)</h2>', re.DOTALL)
 
 def scrape():
     ''' Begin the scraping process
@@ -46,7 +49,10 @@ def scrape():
     global opener
     opener = makeod()
     
-    filename = '%d-%s.sqlite' % (basetime, os.getpid())
+    global directory
+    directory = '%d-%s' % (basetime, os.getpid())
+    os.mkdir(directory)
+    filename = os.path.join(directory, 'db.sqlite')
     
     try:
         msg('Starting up')
@@ -69,7 +75,7 @@ def scrape():
         
         msg('Finished\t\t\tDB file is %s' % filename)
     except Exception, e:
-        msg('Error! %s' % e.message)
+        msg('Error %s' % e.message)
         
         for process in processes:
             msg('Killing process: %d' % process.pid)
@@ -171,10 +177,11 @@ def itemlistscraper(category, subcategory, altsubcategory, url):
     if attribute:
         attributes.append(insertattribute('%s Only' % attribute.strip()))
         
-    parseitemlist(category, subcategory, altsubcategory, data, attributes)
+    parseitemlist(od, category, subcategory, altsubcategory, data, attributes)
 
-def parseitemlist(category, subcategory, altsubcategory, data, attributes):
+def parseitemlist(od, category, subcategory, altsubcategory, data, attributes):
     ''' Parse a list of items
+    @type od: urllib2.OpenerDirector
     @type category: str
     @type subcategory: str
     @type altsubcategory: str
@@ -185,10 +192,77 @@ def parseitemlist(category, subcategory, altsubcategory, data, attributes):
     if matches:
         msg('%s, %s, %s: Found %d item(s)' % (category, subcategory, altsubcategory, len(matches)))
     else:
-        msg('%s, %s, %s: No matches found, did something go wrong?' % (category, subcategory, altsubcategory))
+        msg('WARNING %s, %s, %s: No matches found, did something go wrong?' % (category, subcategory, altsubcategory))
     
     for match in matches:
-        pass
+        groups = re_itempredetails.search(match)
+        dlimage(groups.group('image'))
+        
+        itemdata = readurl('%s%s' % (ROOTURL, groups.group('item')), od)
+        
+        parseitem(category, subcategory, altsubcategory, itemdata, attributes, groups.group('image'))
+
+def parseitem(category, subcategory, altsubcategory, data, attributes, image):
+    ''' Parse item data and store the item details (this is where the magic happens)
+    @type category: str
+    @type subcategory: str
+    @type altsubcategory: str
+    @type data: str
+    @type attributes: list
+    @type image: str
+    '''
+    groups = re_itemdetails.search(data)
+    ###TEMP
+    if not groups:
+        print category, subcategory, altsubcategory
+        return 0
+    
+    itemid = insertitem(groups.group('name'), os.path.basename(image), category, groups.group('level'))
+    
+    if subcategory:
+        linkitemsubcategory(itemid, subcategory)
+    linkitemsubcategory(itemid, altsubcategory)    
+
+def dlimage(url):
+    ''' Download an image at url
+    @type url: str
+    '''
+    image = urllib2.urlopen(url)
+    fd = open(os.path.join(directory, os.path.basename(url)), 'w')
+    fd.write(image.read())
+    fd.close()
+    image.close()
+
+def linkitemsubcategory(itemid, subcategory):
+    ''' Link an item and a subcategory
+    @type itemid: str
+    @type subcategory: str
+    '''
+    dblock.acquire()
+    cursor = db.cursor()
+    cursor.execute('INSERT OR IGNORE INTO itemsubcategory SELECT ?, id FROM subcategory WHERE name = ?', (int(itemid), unicode(subcategory)))
+    rval = cursor.lastrowid
+    db.commit() 
+    cursor.close()    
+    dblock.release()
+    
+    return rval    
+
+def insertitem(name, image, category, level):
+    ''' Insert an item in to the db, return the new id
+    @type name: str
+    @type image: str
+    @type categoryid: str
+    '''
+    dblock.acquire()
+    cursor = db.cursor()
+    cursor.execute('INSERT OR IGNORE INTO item SELECT NULL, ?, ?, id, ? FROM category WHERE name = ?', (unicode(name), unicode(image), int(level), unicode(category)))
+    rval = cursor.lastrowid
+    db.commit() 
+    cursor.close()    
+    dblock.release()
+    
+    return rval    
 
 def insertsubcategory(name, desc):
     ''' Insert a subcategory in to the db, return the new id
@@ -290,7 +364,10 @@ def initdb(db):
     cursor.execute(
     '''CREATE TABLE item(
     id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE
+    name TEXT UNIQUE,
+    image TEXT,
+    categoryid INTEGER,
+    level INTEGER
     )''')
     
     #Attribute
@@ -299,6 +376,15 @@ def initdb(db):
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE
     )''')    
+    
+    #Item-Subcategory
+    cursor.execute(
+    '''CREATE TABLE itemsubcategory(
+    itemid INTEGER,
+    subcategoryid INTEGER,
+    FOREIGN KEY(itemid) REFERENCES item(id),
+    FOREIGN KEY(subcategoryid) REFERENCES subcategory(id)
+    )''')
     
     db.commit()
     cursor.close()
