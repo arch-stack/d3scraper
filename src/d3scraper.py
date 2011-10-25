@@ -41,8 +41,8 @@ re_itemitem = re.compile(r'(?P<item><tr class="row[0-9].*?</tr>)', re.DOTALL)
 re_itemitemspecial = re.compile(r'<div class="data-cell".*?</div>', re.DOTALL)
 re_itempredetails = re.compile(r'href="(?P<item>.*?)".*?src="(?P<image>.*?)"', re.DOTALL)
 re_itemdetails = re.compile(r'<div class="detail-level">.*?<span>(?P<level>[0-9]+)</span>.*?<div class="detail-text">.*?<h2.*?>(?P<name>.*?)</h2>', re.DOTALL)
-re_crafting = re.compile(r'', re.DOTALL)
-re_craftmaterials = re.compile(r'', re.DOTALL)
+re_crafting = re.compile(r'<div class="artisan-content">.*?<div class="created-by">.*?<div class="name.*?>(?P<at>.*?)</div>.*?<div class="level">Level (?P<level>[0-9]*)</div>.*?<div class="material-list">.*?<div class="material-icons">(?P<data>.*?)</div>.*?<div class="cost">.*?<span class="d3-color-white">(?P<cost>[0-9,]*)</span>', re.DOTALL)
+re_craftmaterials = re.compile(r'href="(?P<item>.*?)".*?<span class="no">(?P<quantity>[0-9]*)</span>', re.DOTALL)
 re_craftitem = re.compile(r'<div class="item-taught-by">.*?<h4.*?>(?P<name>.*?)</h4>.*?(?:<p>(?P<desc>.*?)</p>)?', re.DOTALL)
 re_striptags = re.compile(r'<.*?>', re.DOTALL)
 
@@ -250,23 +250,23 @@ def parseitem(ds, category, subcategory, altsubcategory, data, attributes, image
         itemid = insertitem(name, desc, os.path.basename(image), category, 0, url)
         
         # Handle crafting
-#        craftitemgroups = re_itemdetails.search(data)
-#        craftitemname = craftitemgroups.group('name').decode('utf-8').strip()
-#        
-#        craftinggroups = re_crafting.search(data)
-#        craftat = craftinggroups.group('at')
-#        level = craftinggroups.group('level')
-#        cost = craftinggroups.group('cost').replace(',', '')
-#        materialsdata = craftinggroups.group('data')
-#
-#        linkcraft(craftitemname, itemid, craftat, level, cost)
-#        
-#        # Handle crafting materials
-#        materials = re_craftmaterials.findall(materialsdata)
-#        for material in materials:
-#            url = material[0]
-#            quantity = material[1]
-#            linkcraftmaterial(itemid, url, quantity)      
+        craftitemgroups = re_itemdetails.search(data)
+        craftitemname = cleanstr(craftitemgroups.group('name')).strip()
+        
+        craftinggroups = re_crafting.search(data)
+        craftat = craftinggroups.group('at').strip()
+        level = craftinggroups.group('level').strip()
+        cost = craftinggroups.group('cost').replace(',', '').strip()
+        materialsdata = craftinggroups.group('data')
+
+        linkcraft(ds, craftitemname, itemid, craftat, level, cost)
+        
+        # Handle crafting materials
+        materials = re_craftmaterials.findall(materialsdata)
+        for material in materials:
+            url = material[0]
+            quantity = material[1]
+            linkcraftmaterial(ds, itemid, url, quantity)      
         
     # Normal cases
     else:       
@@ -324,8 +324,8 @@ def linkcraftmaterial(ds, craftid, itemurl, quantity):
     @type itemurl: str
     @type quantity: int
     '''
-    ds.put(('INSERT OR IGNORE INTO craftmaterial SELECT ?, id, ? FROM item WHERE url REGEXP ?',
-                          (int(craftid), int(quantity), unicode('.*%s' % itemurl))))
+    ds.put(('INSERT OR IGNORE INTO craftmaterial SELECT ?, id, ? FROM item WHERE url = ?',
+                          (int(craftid), int(quantity), unicode('%s%s' % (ROOTURL, itemurl)))))
 
 def insertitem(name, desc, image, category, level, url):
     ''' Insert an item in to the db, return the new id
