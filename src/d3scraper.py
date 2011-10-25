@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import re, urllib2, sqlite3, gzip, StringIO, os, multiprocessing
+import re, urllib2, urllib, sqlite3, gzip, StringIO, os, multiprocessing
 from xml.dom import minidom
 from time import time
 
@@ -15,6 +15,8 @@ processes = []
 manager = multiprocessing.Manager()
 dblock = manager.Lock()
 
+delayedstatements = multiprocessing.Queue()
+
 opener = None
 
 headers = {
@@ -27,17 +29,22 @@ headers = {
    'Cache-Control': 'no-cache, no-cache',
    }
 
-#Main regexs
+# Main regexs
 re_itemcategoryblock = re.compile(r'<div class="(?P<class>column-[0-9])">', re.DOTALL)
 re_itemcategory = re.compile(r'<div class="column-[0-9]">.*?<h3 class="category ">(?P<category>.*?)</h3>(?P<data>.*)</div>', re.DOTALL)
 re_itemsubcategory = re.compile(r'<div class="box">(?:\s*?<h4 class="subcategory ">(?P<subcategory>.*?)</h4>|(?P<subcategory2>\s*?))(?P<data>.*?)</div>', re.DOTALL)
 re_itemsubcategoryalt = re.compile(r'<a.*?href="(?P<href>.*?)">(?P<subcategory>.*?)(?:<span.*?</span>.*?)?</a>', re.DOTALL)
 
-#Process regexs
+# Process regexs
 re_itemsubcategoryaltdetails = re.compile(r'(?:<span class="item-class-specific">.*?>(?P<class>.*?)</a>.*?)?<div class="desc">(?P<desc>.*?)</div>', re.DOTALL)
 re_itemitem = re.compile(r'(?P<item><tr class="row[0-9].*?</tr>)', re.DOTALL)
+re_itemitemspecial = re.compile(r'<div class="data-cell".*?</div>', re.DOTALL)
 re_itempredetails = re.compile(r'href="(?P<item>.*?)".*?src="(?P<image>.*?)"', re.DOTALL)
 re_itemdetails = re.compile(r'<div class="detail-level">.*?<span>(?P<level>[0-9]+)</span>.*?<div class="detail-text">.*?<h2.*?>(?P<name>.*?)</h2>', re.DOTALL)
+re_crafting = re.compile(r'', re.DOTALL)
+re_craftmaterials = re.compile(r'', re.DOTALL)
+re_craftitem = re.compile(r'<div class="item-taught-by">.*?<h4.*?>(?P<name>.*?)</h4>.*?(?:<p>(?P<desc>.*?)</p>)?', re.DOTALL)
+re_striptags = re.compile(r'<.*?>', re.DOTALL)
 
 def scrape():
     ''' Begin the scraping process
@@ -70,6 +77,9 @@ def scrape():
             processes.pop().join()
         msg('Processes finished')
         
+        msg('Executing all delayed statements')
+        execdelayed()
+        
         msg('Closing db')
         db.close()
         
@@ -87,7 +97,7 @@ def parsecategories(data):
     '''
     msg('Parsing categories')
     
-    #Need to use a dom due to a few inconsistencies that get in the way of simple regexs
+    # Need to use a dom due to a few inconsistencies that get in the way of simple regexs
     doc = minidom.parseString(data)
     nodes = doc.getElementsByTagName('div')
     
@@ -132,7 +142,7 @@ def parsesubcategories(category, data):
         if subcategory:
             insertsubcategory(subcategory, '')
             
-        #Parse alt subcategories
+        # Parse alt subcategories
         altmatches = re_itemsubcategoryalt.findall(match[2])
         for altmatch in altmatches:
             altsubcategory = altmatch[1].strip()
@@ -149,7 +159,8 @@ def prepprocess(category, subcategory, altsubcategory, url):
     '''
     msg('Preparing process: %s, %s, %s' % (category, subcategory, altsubcategory))
     processes.append(multiprocessing.Process(target = itemlistscraper,
-                                             args = (category,
+                                             args = (delayedstatements,
+                                                     category,
                                                      subcategory,
                                                      altsubcategory,
                                                      url
@@ -157,8 +168,9 @@ def prepprocess(category, subcategory, altsubcategory, url):
     processes[-1].start()
     msg('Process running(%d): %s, %s, %s' % (processes[-1].pid, category, subcategory, altsubcategory))
     
-def itemlistscraper(category, subcategory, altsubcategory, url):
+def itemlistscraper(ds, category, subcategory, altsubcategory, url):
     ''' Load the url and parse each item
+    @type ds: multiprocessing.Queue
     @type category: str
     @type subcategory: str
     @type altsubcategory: str
@@ -168,8 +180,7 @@ def itemlistscraper(category, subcategory, altsubcategory, url):
     data = readurl('%s%s' % (ROOTURL, url), od)
     
     groups = re_itemsubcategoryaltdetails.search(data)
-    #Swap out two unicode chars blizzard seems to like to use instead of ascii equivalents
-    desc = unicode(groups.group('desc').decode('utf-8')).replace(u'\u2019', '\'').replace(u'\u2013', '-').strip()
+    desc = cleanstr(groups.group('desc')).strip()
     insertsubcategory(altsubcategory, desc)
     
     attributes = []
@@ -177,10 +188,11 @@ def itemlistscraper(category, subcategory, altsubcategory, url):
     if attribute:
         attributes.append(insertattribute('%s Only' % attribute.strip()))
         
-    parseitemlist(od, category, subcategory, altsubcategory, data, attributes)
+    parseitemlist(ds, od, category, subcategory, altsubcategory, data, attributes)
 
-def parseitemlist(od, category, subcategory, altsubcategory, data, attributes):
+def parseitemlist(ds, od, category, subcategory, altsubcategory, data, attributes):
     ''' Parse a list of items
+    @type ds: multiprocessing.Queue
     @type od: urllib2.OpenerDirector
     @type category: str
     @type subcategory: str
@@ -188,7 +200,15 @@ def parseitemlist(od, category, subcategory, altsubcategory, data, attributes):
     @type data: str
     @type attributes: list
     '''
-    matches = re_itemitem.findall(data)
+    matches = []
+    
+    # Special lists
+    if altsubcategory in ('Crafting Materials', 'Dyes', 'Gems', 'Runestones', 'Potions'):
+        matches = re_itemitemspecial.findall(data)
+    # Normal lists
+    else:
+        matches = re_itemitem.findall(data)
+        
     if matches:
         msg('%s, %s, %s: Found %d item(s)' % (category, subcategory, altsubcategory, len(matches)))
     else:
@@ -200,10 +220,11 @@ def parseitemlist(od, category, subcategory, altsubcategory, data, attributes):
         
         itemdata = readurl('%s%s' % (ROOTURL, groups.group('item')), od)
         
-        parseitem(category, subcategory, altsubcategory, itemdata, attributes, groups.group('image'))
+        parseitem(ds, category, subcategory, altsubcategory, itemdata, attributes, groups.group('image'), '%s%s' % (ROOTURL, groups.group('item')))
 
-def parseitem(category, subcategory, altsubcategory, data, attributes, image):
+def parseitem(ds, category, subcategory, altsubcategory, data, attributes, image, url):
     ''' Parse item data and store the item details (this is where the magic happens)
+    @type ds: multiprocessing.Queue
     @type category: str
     @type subcategory: str
     @type altsubcategory: str
@@ -211,17 +232,55 @@ def parseitem(category, subcategory, altsubcategory, data, attributes, image):
     @type attributes: list
     @type image: str
     '''
-    groups = re_itemdetails.search(data)
-    ###TEMP
-    if not groups:
-        print category, subcategory, altsubcategory
-        return 0
     
-    itemid = insertitem(groups.group('name'), os.path.basename(image), category, groups.group('level'))
+    itemid = 0
     
-    if subcategory:
-        linkitemsubcategory(itemid, subcategory)
-    linkitemsubcategory(itemid, altsubcategory)    
+    # Handle blacksmith plan special cases
+    if altsubcategory == 'Blacksmith Plans':
+        # Handle the plan item
+        groups = re_craftitem.search(data)
+        name = cleanstr(groups.group('name'))
+        desc = groups.group('desc')
+        if desc:
+            # Clean up the text
+            desc = re_striptags.sub('', cleanstr(desc).strip())
+        else:
+            desc = ''
+                
+        itemid = insertitem(name, desc, os.path.basename(image), category, 0, url)
+        
+        # Handle crafting
+#        craftitemgroups = re_itemdetails.search(data)
+#        craftitemname = craftitemgroups.group('name').decode('utf-8').strip()
+#        
+#        craftinggroups = re_crafting.search(data)
+#        craftat = craftinggroups.group('at')
+#        level = craftinggroups.group('level')
+#        cost = craftinggroups.group('cost').replace(',', '')
+#        materialsdata = craftinggroups.group('data')
+#
+#        linkcraft(craftitemname, itemid, craftat, level, cost)
+#        
+#        # Handle crafting materials
+#        materials = re_craftmaterials.findall(materialsdata)
+#        for material in materials:
+#            url = material[0]
+#            quantity = material[1]
+#            linkcraftmaterial(itemid, url, quantity)      
+        
+    # Normal cases
+    else:       
+        groups = re_itemdetails.search(data)
+        
+        name = cleanstr(groups.group('name')).strip()
+        level = groups.group('level')
+        
+        itemid = insertitem(name, '', os.path.basename(image), category, level, url)
+    
+    if itemid:
+        if subcategory:
+            linkitemsubcategory(itemid, subcategory)
+        linkitemsubcategory(itemid, altsubcategory)    
 
 def dlimage(url):
     ''' Download an image at url
@@ -240,15 +299,35 @@ def linkitemsubcategory(itemid, subcategory):
     '''
     dblock.acquire()
     cursor = db.cursor()
-    cursor.execute('INSERT OR IGNORE INTO itemsubcategory SELECT ?, id FROM subcategory WHERE name = ?', (int(itemid), unicode(subcategory)))
-    rval = cursor.lastrowid
+    cursor.execute('INSERT OR IGNORE INTO itemsubcategory SELECT ?, id FROM subcategory WHERE name = ?', 
+                   (int(itemid), unicode(subcategory)))
     db.commit() 
     cursor.close()    
     dblock.release()
-    
-    return rval    
 
-def insertitem(name, image, category, level):
+def linkcraft(ds, craftitemname, itemid, craftat, level, cost):
+    ''' Link a craft to items 
+    @type ds: multiprocessing.Queue
+    @type craftitemname: str
+    @type itemid: str
+    @type craftat: str
+    @type level: int
+    @type cost: int
+    '''
+    ds.put(('INSERT OR IGNORE INTO craft SELECT id, ?, ?, ?, ? FROM item WHERE name = ?',
+                          (int(itemid), unicode(craftat), int(level), int(cost), unicode(craftitemname))))
+
+def linkcraftmaterial(ds, craftid, itemurl, quantity):
+    ''' Link a craft to items 
+    @type ds: multiprocessing.Queue
+    @type craftid: str
+    @type itemurl: str
+    @type quantity: int
+    '''
+    ds.put(('INSERT OR IGNORE INTO craftmaterial SELECT ?, id, ? FROM item WHERE url REGEXP ?',
+                          (int(craftid), int(quantity), unicode('.*%s' % itemurl))))
+
+def insertitem(name, desc, image, category, level, url):
     ''' Insert an item in to the db, return the new id
     @type name: str
     @type image: str
@@ -256,7 +335,8 @@ def insertitem(name, image, category, level):
     '''
     dblock.acquire()
     cursor = db.cursor()
-    cursor.execute('INSERT OR IGNORE INTO item SELECT NULL, ?, ?, id, ? FROM category WHERE name = ?', (unicode(name), unicode(image), int(level), unicode(category)))
+    cursor.execute('INSERT OR IGNORE INTO item SELECT NULL, ?, ?, ?, id, ?, ? FROM category WHERE name = ?', 
+                   (unicode(name), unicode(desc), unicode(image), int(level), unicode(url), unicode(category)))
     rval = cursor.lastrowid
     db.commit() 
     cursor.close()    
@@ -271,7 +351,8 @@ def insertsubcategory(name, desc):
     '''
     dblock.acquire()
     cursor = db.cursor()
-    cursor.execute('INSERT OR IGNORE INTO subcategory VALUES(NULL, ?, ?)', (unicode(name), unicode(desc)))
+    cursor.execute('INSERT OR IGNORE INTO subcategory VALUES(NULL, ?, ?)', 
+                   (unicode(name), unicode(desc)))
     rval = cursor.lastrowid
     db.commit() 
     cursor.close()    
@@ -285,7 +366,8 @@ def insertattribute(name):
     '''
     dblock.acquire()
     cursor = db.cursor()
-    cursor.execute('INSERT OR IGNORE INTO attribute VALUES(NULL, ?)', (unicode(name),))
+    cursor.execute('INSERT OR IGNORE INTO attribute VALUES(NULL, ?)', 
+                   (unicode(name),))
     rval = cursor.lastrowid
     db.commit() 
     cursor.close()    
@@ -304,15 +386,30 @@ def readurl(url, od):
     @type url: str
     @type od: urllib2.OpenerDirector
     '''
-    msg('Requesting: %s' % url)
+    requestheaders = {}
+    data = ''
+    responseheaders = []
     
-    req = urllib2.Request(url, None, headers)
-    
-    res = od.open(req)
-    
-    data = res.read()
-    
-    responseheaders = res.info()
+    while(True):
+        msg('Requesting: %s' % url)
+        
+        req = urllib2.Request(url, urllib.urlencode(requestheaders), headers)
+        
+        res = od.open(req)
+        
+        # Normal case
+        if not 'd3/en/age' in res.geturl():
+            data = res.read()
+            responseheaders = res.info()
+            break
+        # Agegate
+        else:
+            msg('Submitting to age gate')
+            requestheaders['day'] = 21
+            requestheaders['month'] = 7
+            requestheaders['year'] = 1986
+            url = res.geturl()
+            
     
     if 'content-encoding' in responseheaders.keys() and responseheaders['content-encoding'] == 'gzip':
         sfd = StringIO.StringIO(data)
@@ -322,6 +419,12 @@ def readurl(url, od):
         sfd.close()
     
     return data
+
+def cleanstr(string):
+    ''' Remove some unicode chars blizzard uses
+    @type string: str
+    '''
+    return unicode(string.decode('utf-8')).replace(u'\u2019', '\'').replace(u'\u2013', '-')
 
 def makeod():
     ''' Create and return a urllib2.OpenerDirector
@@ -343,16 +446,16 @@ def initdb(db):
     
     cursor = db.cursor()
     
-    ###Tables
+    ### Tables
     
-    #Category
+    # Category
     cursor.execute(
     '''CREATE TABLE category(
     id INTEGER PRIMARY KEY, 
     name TEXT UNIQUE
     )''')
     
-    #Subcategory
+    # Subcategory
     cursor.execute(
     '''CREATE TABLE subcategory(
     id INTEGER PRIMARY KEY,
@@ -360,24 +463,27 @@ def initdb(db):
     desc TEXT
     )''')
     
-    #Item
+    # Item
     cursor.execute(
     '''CREATE TABLE item(
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE,
+    desc TEXT,
     image TEXT,
     categoryid INTEGER,
-    level INTEGER
+    level INTEGER,
+    url TEXT,
+    FOREIGN KEY(categoryid) REFERENCES category(id)
     )''')
     
-    #Attribute
+    # Attribute
     cursor.execute(
     '''CREATE TABLE attribute(
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE
     )''')    
     
-    #Item-Subcategory
+    # Item-Subcategory
     cursor.execute(
     '''CREATE TABLE itemsubcategory(
     itemid INTEGER,
@@ -386,8 +492,43 @@ def initdb(db):
     FOREIGN KEY(subcategoryid) REFERENCES subcategory(id)
     )''')
     
+    # Craft
+    cursor.execute(
+    '''CREATE TABLE craft(
+    id INTEGER UNIQUE,
+    requireditemid INTEGER UNIQUE,
+    craftat TEXT,
+    level INTEGER,
+    cost INTEGER,
+    FOREIGN KEY(id) REFERENCES item(id),
+    FOREIGN KEY(requireditemid) REFERENCES item(id)
+    )''')
+    
+    # Craft-Material
+    cursor.execute(
+    '''CREATE TABLE craftmaterial(
+    craftid INTEGER,
+    itemid INTEGER,
+    quantity INTEGER,
+    FOREIGN KEY(craftid) REFERENCES craft(id),
+    FOREIGN KEY(itemid) REFERENCES item(id)
+    )''')
+    
     db.commit()
     cursor.close()
     
+def execdelayed():
+    ''' Execute all delayed statements
+    A statement may be delayed if it's possible the dependancies are not yet met
+    Ex: crafts may be parsed before items, delay the craft til after items are added
+    '''
+    msg('%d delayed statements' % delayedstatements.qsize())
+    cursor = db.cursor()
+    while(not delayedstatements.empty()):
+        data = delayedstatements.get()
+        cursor.execute(data[0], data[1])
+    db.commit() 
+    cursor.close()    
+
 if __name__ == '__main__':
     scrape()
