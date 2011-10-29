@@ -1,10 +1,11 @@
 #!/usr/bin/python
-import re, urllib2, urllib, sqlite3, gzip, StringIO, os, multiprocessing
+import re, urllib2, urllib, sqlite3, gzip, StringIO, os, multiprocessing, socket
 from xml.dom import minidom
 from time import time
 
 ROOTURL = 'http://us.battle.net'
 D3ITEMPAGE = '%s/d3/en/item/' % ROOTURL
+TIMEOUT = 15
 
 db = None
 basetime = 0
@@ -15,12 +16,14 @@ processes = []
 manager = multiprocessing.Manager()
 dblock = manager.Lock()
 
-delayedstatements = multiprocessing.Queue()
+craftstatements = multiprocessing.Queue()
+craftmaterialstatements = multiprocessing.Queue()
 
 opener = None
 
 headers = {
-   'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:7.0.1) Gecko/20100101 Firefox/7.0.1 Iceweasel/7.0.1',
+#   'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:7.0.1) Gecko/20100101 Firefox/7.0.1 Iceweasel/7.0.1',
+   'User-Agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)',
    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
    'Accept-Language': 'en-us,en;q=0.5',
    'Accept-Encoding': 'gzip, deflate',
@@ -74,7 +77,9 @@ def scrape():
         
         msg('Waiting for all processes to finish')
         while(processes):
-            processes.pop().join()
+            p = processes.pop()
+            msg('Joining process: %d' % p.pid)
+            p.join()
         msg('Processes finished')
         
         msg('Executing all delayed statements')
@@ -84,7 +89,7 @@ def scrape():
         db.close()
         
         msg('Finished\t\t\tDB file is %s' % filename)
-    except Exception, e:
+    except Exception as e:
         msg('Error %s' % e.message)
         
         for process in processes:
@@ -148,52 +153,21 @@ def parsesubcategories(category, data):
             altsubcategory = altmatch[1].strip()
             
             msg('Found alt subcategory: %s' % altsubcategory)
-            prepprocess(category, subcategory, altsubcategory, altmatch[0])
+            listdata = readurl('%s%s' % (ROOTURL, altmatch[0]), opener)
             
-def prepprocess(category, subcategory, altsubcategory, url):
-    ''' Prepare a process to scrape all items in a specific altsubcategory page
-    @type category: str
-    @type subcategory: str
-    @type altsubcategory: str
-    @type url: str
-    '''
-    msg('Preparing process: %s, %s, %s' % (category, subcategory, altsubcategory))
-    processes.append(multiprocessing.Process(target = itemlistscraper,
-                                             args = (delayedstatements,
-                                                     category,
-                                                     subcategory,
-                                                     altsubcategory,
-                                                     url
-                                                     )))
-    processes[-1].start()
-    msg('Process running(%d): %s, %s, %s' % (processes[-1].pid, category, subcategory, altsubcategory))
-    
-def itemlistscraper(ds, category, subcategory, altsubcategory, url):
-    ''' Load the url and parse each item
-    @type ds: multiprocessing.Queue
-    @type category: str
-    @type subcategory: str
-    @type altsubcategory: str
-    @type url: str
-    '''
-    od = makeod()
-    data = readurl('%s%s' % (ROOTURL, url), od)
-    
-    groups = re_itemsubcategoryaltdetails.search(data)
-    desc = cleanstr(groups.group('desc')).strip()
-    insertsubcategory(altsubcategory, desc)
-    
-    attributes = []
-    attribute = groups.group('class')
-    if attribute:
-        attributes.append(insertattribute('%s Only' % attribute.strip()))
-        
-    parseitemlist(ds, od, category, subcategory, altsubcategory, data, attributes)
-
-def parseitemlist(ds, od, category, subcategory, altsubcategory, data, attributes):
+            groups = re_itemsubcategoryaltdetails.search(listdata)
+            desc = cleanstr(groups.group('desc')).strip()
+            insertsubcategory(altsubcategory, desc)
+            
+            attributes = []
+            attribute = groups.group('class')
+            if attribute:
+                attributes.append(insertattribute('%s Only' % attribute.strip()))
+                
+            parseitemlist(category, subcategory, altsubcategory, listdata, attributes)
+            
+def parseitemlist(category, subcategory, altsubcategory, data, attributes):
     ''' Parse a list of items
-    @type ds: multiprocessing.Queue
-    @type od: urllib2.OpenerDirector
     @type category: str
     @type subcategory: str
     @type altsubcategory: str
@@ -216,23 +190,46 @@ def parseitemlist(ds, od, category, subcategory, altsubcategory, data, attribute
     
     for match in matches:
         groups = re_itempredetails.search(match)
-        dlimage(groups.group('image'))
-        
-        itemdata = readurl('%s%s' % (ROOTURL, groups.group('item')), od)
-        
-        parseitem(ds, category, subcategory, altsubcategory, itemdata, attributes, groups.group('image'), '%s%s' % (ROOTURL, groups.group('item')))
+        prepprocess(craftstatements, craftmaterialstatements, category, subcategory, altsubcategory, attributes, groups.group('image'), groups.group('item'))
 
-def parseitem(ds, category, subcategory, altsubcategory, data, attributes, image, url):
-    ''' Parse item data and store the item details (this is where the magic happens)
-    @type ds: multiprocessing.Queue
+def prepprocess(cs, cms, category, subcategory, altsubcategory, attributes, image, url):
+    ''' Prepare a process to scrape all items in a specific altsubcategory page
+    @type cs: multiprocessing.Queue
+    @type cms: multiprocessing.Queue
     @type category: str
     @type subcategory: str
     @type altsubcategory: str
-    @type data: str
+    @type url: str
+    '''
+    msg('Preparing process: %s, %s, %s' % (category, subcategory, altsubcategory))
+    processes.append(multiprocessing.Process(target = parseitem,
+                                             args = (cs,
+                                                     cms,
+                                                     category,
+                                                     subcategory,
+                                                     altsubcategory,
+                                                     attributes, 
+                                                     image,
+                                                     url
+                                                     )))
+    processes[-1].start()
+    msg('Process running(%d): %s, %s, %s' % (processes[-1].pid, category, subcategory, altsubcategory))
+
+def parseitem(cs, cms, category, subcategory, altsubcategory, attributes, image, url):
+    ''' Parse item data and store the item details (this is where the magic happens)
+    @type cs: multiprocessing.Queue
+    @type cms: multiprocessing.Queue
+    @type category: str
+    @type subcategory: str
+    @type altsubcategory: str
     @type attributes: list
     @type image: str
+    @type url: str
     '''
-    
+
+    od = makeod()
+    dlimage(image, od)
+    data = readurl('%s%s' % (ROOTURL, url), od)
     itemid = 0
     
     # Handle blacksmith plan special cases
@@ -259,14 +256,15 @@ def parseitem(ds, category, subcategory, altsubcategory, data, attributes, image
         cost = craftinggroups.group('cost').replace(',', '').strip()
         materialsdata = craftinggroups.group('data')
 
-        linkcraft(ds, craftitemname, itemid, craftat, level, cost)
+        linkcraft(cs, craftitemname, itemid, craftat, level, cost)
         
         # Handle crafting materials
         materials = re_craftmaterials.findall(materialsdata)
+        msg('Materials found for %s: %d' % (name, len(materials)))
         for material in materials:
             url = material[0]
             quantity = material[1]
-            linkcraftmaterial(ds, itemid, url, quantity)      
+            linkcraftmaterial(cms, itemid, url, quantity)      
         
     # Normal cases
     else:       
@@ -282,15 +280,14 @@ def parseitem(ds, category, subcategory, altsubcategory, data, attributes, image
             linkitemsubcategory(itemid, subcategory)
         linkitemsubcategory(itemid, altsubcategory)    
 
-def dlimage(url):
+def dlimage(url, od):
     ''' Download an image at url
     @type url: str
+    @type od: urllib2.OpenerDirector
     '''
-    image = urllib2.urlopen(url)
     fd = open(os.path.join(directory, os.path.basename(url)), 'w')
-    fd.write(image.read())
+    fd.write(readurl(url, od, 30))
     fd.close()
-    image.close()
 
 def linkitemsubcategory(itemid, subcategory):
     ''' Link an item and a subcategory
@@ -305,33 +302,36 @@ def linkitemsubcategory(itemid, subcategory):
     cursor.close()    
     dblock.release()
 
-def linkcraft(ds, craftitemname, itemid, craftat, level, cost):
+def linkcraft(cs, craftitemname, itemid, craftat, level, cost):
     ''' Link a craft to items 
-    @type ds: multiprocessing.Queue
+    @type cs: multiprocessing.Queue
     @type craftitemname: str
     @type itemid: str
     @type craftat: str
     @type level: int
     @type cost: int
     '''
-    ds.put(('INSERT OR IGNORE INTO craft SELECT id, ?, ?, ?, ? FROM item WHERE name = ?',
-                          (int(itemid), unicode(craftat), int(level), int(cost), unicode(craftitemname))))
+    msg('Pushing to craft queue(size %d)' % cs.qsize())
+    cs.put((int(itemid), unicode(craftat), int(level), int(cost), unicode(craftitemname)))
 
-def linkcraftmaterial(ds, craftid, itemurl, quantity):
+def linkcraftmaterial(cms, craftid, itemurl, quantity):
     ''' Link a craft to items 
-    @type ds: multiprocessing.Queue
+    @type cms: multiprocessing.Queue
     @type craftid: str
     @type itemurl: str
     @type quantity: int
     '''
-    ds.put(('INSERT OR IGNORE INTO craftmaterial SELECT ?, id, ? FROM item WHERE url = ?',
-                          (int(craftid), int(quantity), unicode('%s%s' % (ROOTURL, itemurl)))))
+    msg('Pushing to material queue(size %d)' % cms.qsize())
+    cms.put((int(craftid), int(quantity), unicode(itemurl)))
 
 def insertitem(name, desc, image, category, level, url):
     ''' Insert an item in to the db, return the new id
     @type name: str
+    @type desc: str
     @type image: str
-    @type categoryid: str
+    @type category: str
+    @type level: int
+    @type url: str
     '''
     dblock.acquire()
     cursor = db.cursor()
@@ -381,10 +381,11 @@ def msg(text):
     '''
     print '[%3d] %s' % (time() - basetime, text)
 
-def readurl(url, od):
+def readurl(url, od, timeout = TIMEOUT):
     ''' Read a URL and return the HTML data
     @type url: str
     @type od: urllib2.OpenerDirector
+    @type timeout: int
     '''
     requestheaders = {}
     data = ''
@@ -393,9 +394,27 @@ def readurl(url, od):
     while(True):
         msg('Requesting: %s' % url)
         
-        req = urllib2.Request(url, urllib.urlencode(requestheaders), headers)
+        req = urllib2.Request(url, headers = headers)
         
-        res = od.open(req)
+        if requestheaders:
+            req.add_data(urllib.urlencode(requestheaders))
+            requestheaders = {}
+        
+        res = None
+        try:
+            res = od.open(req, timeout = timeout)
+        except urllib2.HTTPError as e:
+            msg('Error getting url(%d): %s' % (e.code, url))
+            continue
+        except urllib2.URLError as e:
+            msg('Error getting url(%s): %s' % (e.reason, url))    
+            continue
+        except socket.timeout as e:
+            msg('Error getting url(%s): %s' % (e.message, url))    
+            continue
+        except Exception as e:
+            msg('Error getting url(%s): %s' % (e.message, url))
+            continue
         
         # Normal case
         if not 'd3/en/age' in res.geturl():
@@ -434,6 +453,8 @@ def makeod():
     rval.add_handler(urllib2.HTTPCookieProcessor())
     rval.add_handler(urllib2.HTTPRedirectHandler())
     rval.add_handler(urllib2.UnknownHandler())
+    # Comment/uncomment the next line to disable/enable using a proxy
+    #rval.add_handler(urllib2.ProxyHandler({'http': '24.139.43.249:8085'}))
     
     return rval
 
@@ -522,11 +543,19 @@ def execdelayed():
     A statement may be delayed if it's possible the dependancies are not yet met
     Ex: crafts may be parsed before items, delay the craft til after items are added
     '''
-    msg('%d delayed statements' % delayedstatements.qsize())
+    statements = ('INSERT OR IGNORE INTO craft SELECT id, ?, ?, ?, ? FROM item WHERE name = ?',
+                  'INSERT OR IGNORE INTO craftmaterial SELECT ?, id, ? FROM item WHERE url = ?')
+    
+    msg('%d delayed craft statements' % craftstatements.qsize())
+    msg('%d delayed material statements' % craftmaterialstatements.qsize())
     cursor = db.cursor()
-    while(not delayedstatements.empty()):
-        data = delayedstatements.get()
-        cursor.execute(data[0], data[1])
+    while(not craftstatements.empty()):
+        data = craftstatements.get()
+        cursor.execute(statements[0], data)
+        
+    while(not craftmaterialstatements.empty()):
+        data = craftmaterialstatements.get()
+        cursor.execute(statements[1], data)
     db.commit() 
     cursor.close()    
 
