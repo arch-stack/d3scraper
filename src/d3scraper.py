@@ -2,7 +2,7 @@
 import os, urllib2, sqlite3, multiprocessing, StringIO, gzip, urllib, socket
 from time import time
 
-class d3scraper:
+class d3scraper(object):
     ROOTURL = 'http://us.battle.net'
     D3ITEMPAGE = '%s/d3/en/item/' % ROOTURL
     TIMEOUT = 15
