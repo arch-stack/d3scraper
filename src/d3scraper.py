@@ -12,6 +12,8 @@ class d3scraper(object):
     basetime = 0
     directory = ''
     
+    badchars = {u'\u2019': '\'', u'\u2013': '-'}
+    
     opener = None
     
     headers = {
@@ -227,7 +229,11 @@ class d3scraper(object):
         ''' Remove some unicode chars blizzard uses
         @type string: str
         '''
-        return unicode(string.decode('utf-8')).replace(u'\u2019', '\'').replace(u'\u2013', '-')
+        newstr = unicode(string.decode('utf-8'))
+        for (key, value) in self.badchars.items():
+            newstr = newstr.replace(key, value)
+            
+        return newstr
     
     def makeod(self):
         ''' Create and return a urllib2.OpenerDirector

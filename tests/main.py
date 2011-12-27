@@ -1,6 +1,24 @@
 import unittest, sqlite3
 from src.d3scraper import d3scraper
 
+class Testd3scraper(unittest.TestCase):
+    def setUp(self):
+        self.d3 = d3scraper()
+    
+    def tearDown(self):
+        pass
+    
+    def test_cleanstr(self):
+        badstr = ''.join(self.d3.badchars.keys())
+        goodstr = self.d3.cleanstr(badstr)
+        matches = len(set(badstr) & set(goodstr))
+        self.assertFalse(matches, 'Bad chars still found: {0} {1} {2}'.format(str(matches), str(badstr), str(goodstr)))
+        
+    def test_makeod(self):
+        od = self.d3.makeod()
+        self.assertTrue(od, 'OD was not created')
+        self.assertEqual(od.open('http://google.ca').getcode(), 200, 'OD could not access google')
+
 class TestDB(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(':memory:')
