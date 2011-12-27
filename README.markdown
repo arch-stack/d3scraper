@@ -8,3 +8,8 @@ d3scraper
 
 ###Purpose
 To pull all items and their relevant information from the diablo3 website for any use in an easy to use format.
+
+###Versions
+0.3: This is intended to be the new beta release. It's a work in progress. Goals include unit-tests and code coverage.
+0.2BROKEN: Broken version. Final commit of my primary design. Due to complications/limitations I decided to re-think how I am doing things and decided to go with a more clean/proper approach after learning python multiprocessing.
+0.1: Initial partially working version
