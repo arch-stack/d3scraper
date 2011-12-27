@@ -3,6 +3,8 @@ import re, urllib2, urllib, sqlite3, gzip, StringIO, os, multiprocessing, socket
 from xml.dom import minidom
 from time import time
 
+import d3utility
+
 ROOTURL = 'http://us.battle.net'
 D3ITEMPAGE = '%s/d3/en/item/' % ROOTURL
 TIMEOUT = 15
@@ -18,6 +20,7 @@ dblock = manager.Lock()
 
 craftstatements = multiprocessing.Queue()
 craftmaterialstatements = multiprocessing.Queue()
+attributestatements = d3utility.largequeue()
 
 opener = None
 
@@ -37,16 +40,19 @@ re_itemcategoryblock = re.compile(r'<div class="(?P<class>column-[0-9])">', re.D
 re_itemcategory = re.compile(r'<div class="column-[0-9]">.*?<h3 class="category ">(?P<category>.*?)</h3>(?P<data>.*)</div>', re.DOTALL)
 re_itemsubcategory = re.compile(r'<div class="box">(?:\s*?<h4 class="subcategory ">(?P<subcategory>.*?)</h4>|(?P<subcategory2>\s*?))(?P<data>.*?)</div>', re.DOTALL)
 re_itemsubcategoryalt = re.compile(r'<a.*?href="(?P<href>.*?)">(?P<subcategory>.*?)(?:<span.*?</span>.*?)?</a>', re.DOTALL)
-
-# Process regexs
 re_itemsubcategoryaltdetails = re.compile(r'(?:<span class="item-class-specific">.*?>(?P<class>.*?)</a>.*?)?<div class="desc">(?P<desc>.*?)</div>', re.DOTALL)
 re_itemitem = re.compile(r'(?P<item><tr class="row[0-9].*?</tr>)', re.DOTALL)
 re_itemitemspecial = re.compile(r'<div class="data-cell".*?</div>', re.DOTALL)
 re_itempredetails = re.compile(r'href="(?P<item>.*?)".*?src="(?P<image>.*?)"', re.DOTALL)
-re_itemdetails = re.compile(r'<div class="detail-level">.*?<span>(?P<level>[0-9]+)</span>.*?<div class="detail-text">.*?<h2.*?>(?P<name>.*?)</h2>', re.DOTALL)
+
+# Process regexs
+re_itemdetails = re.compile(r'<div class="detail-level">.*?<span>(?P<level>[0-9]+)</span>.*?<div class="detail-text">.*?<h2.*?>(?P<name>.*?)</h2>.*?<div class="d3-item-properties">(?P<data>.*?)</div>\s*?</div>', re.DOTALL)
 re_crafting = re.compile(r'<div class="artisan-content">.*?<div class="created-by">.*?<div class="name.*?>(?P<at>.*?)</div>.*?<div class="level">Level (?P<level>[0-9]*)</div>.*?<div class="material-list">.*?<div class="material-icons">(?P<data>.*?)</div>.*?<div class="cost">.*?<span class="d3-color-white">(?P<cost>[0-9,]*)</span>', re.DOTALL)
 re_craftmaterials = re.compile(r'href="(?P<item>.*?)".*?<span class="no">(?P<quantity>[0-9]*)</span>', re.DOTALL)
 re_craftitem = re.compile(r'<div class="item-taught-by">.*?<h4.*?>(?P<name>.*?)</h4>.*?(?:<p>(?P<desc>.*?)</p>)?', re.DOTALL)
+re_itemattr = re.compile(r'(?:<ul class="item-type">(?P<type>.*?)</ul>.*?)?<ul class="item-armor-weapon">(?P<armorweapon>.*?)</ul>.*?(?:<div class="item-description">(?P<desc>.*?)</div>.*?)?(?:<ul class="item-effects">(?P<effects>.*?)</ul>.*?)?(?:<ul class="item-itemset">(?P<set>.*?)</ul>.*?)?(?:<ul class="item-extras">(?P<extras>.*?)</ul>)?', re.DOTALL)
+re_itemattrlist = re.compile(r'<li>(?P<data>.*?)</li>', re.DOTALL)
+
 re_striptags = re.compile(r'<.*?>', re.DOTALL)
 
 def scrape():
@@ -162,7 +168,9 @@ def parsesubcategories(category, data):
             attributes = []
             attribute = groups.group('class')
             if attribute:
-                attributes.append(insertattribute('%s Only' % attribute.strip()))
+                attribute = '%s Only' % attribute.strip()
+                insertattribute(attribute)
+                attributes.append((attribute, 0, 0, 'NONE'))
                 
             parseitemlist(category, subcategory, altsubcategory, listdata, attributes)
             
@@ -190,12 +198,10 @@ def parseitemlist(category, subcategory, altsubcategory, data, attributes):
     
     for match in matches:
         groups = re_itempredetails.search(match)
-        prepprocess(craftstatements, craftmaterialstatements, category, subcategory, altsubcategory, attributes, groups.group('image'), groups.group('item'))
+        prepprocess(category, subcategory, altsubcategory, attributes, groups.group('image'), groups.group('item'))
 
-def prepprocess(cs, cms, category, subcategory, altsubcategory, attributes, image, url):
+def prepprocess(category, subcategory, altsubcategory, attributes, image, url):
     ''' Prepare a process to scrape all items in a specific altsubcategory page
-    @type cs: multiprocessing.Queue
-    @type cms: multiprocessing.Queue
     @type category: str
     @type subcategory: str
     @type altsubcategory: str
@@ -203,8 +209,9 @@ def prepprocess(cs, cms, category, subcategory, altsubcategory, attributes, imag
     '''
     msg('Preparing process: %s, %s, %s' % (category, subcategory, altsubcategory))
     processes.append(multiprocessing.Process(target = parseitem,
-                                             args = (cs,
-                                                     cms,
+                                             args = (craftstatements,
+                                                     craftmaterialstatements,
+                                                     attributestatements,
                                                      category,
                                                      subcategory,
                                                      altsubcategory,
@@ -215,10 +222,11 @@ def prepprocess(cs, cms, category, subcategory, altsubcategory, attributes, imag
     processes[-1].start()
     msg('Process running(%d): %s, %s, %s' % (processes[-1].pid, category, subcategory, altsubcategory))
 
-def parseitem(cs, cms, category, subcategory, altsubcategory, attributes, image, url):
+def parseitem(cs, cms, ats, category, subcategory, altsubcategory, attributes, image, url):
     ''' Parse item data and store the item details (this is where the magic happens)
     @type cs: multiprocessing.Queue
     @type cms: multiprocessing.Queue
+    @type ats: multiprocessing.Queue
     @type category: str
     @type subcategory: str
     @type altsubcategory: str
@@ -272,13 +280,56 @@ def parseitem(cs, cms, category, subcategory, altsubcategory, attributes, image,
         
         name = cleanstr(groups.group('name')).strip()
         level = groups.group('level')
+        attrdata = groups.group('data')
+        desc = parseattributes(attrdata, attributes)
         
-        itemid = insertitem(name, '', os.path.basename(image), category, level, url)
+        itemid = insertitem(name, desc, os.path.basename(image), category, level, url)
     
     if itemid:
         if subcategory:
             linkitemsubcategory(itemid, subcategory)
-        linkitemsubcategory(itemid, altsubcategory)    
+        linkitemsubcategory(itemid, altsubcategory)
+        
+        for attribute in attributes:
+            linkitemattribute(ats, itemid, attribute[0], attribute[1], attribute[2], attribute[3])
+            
+def parseattributes(data, attributes):
+    ''' Parse item attributes and add to list, return description if found
+    @type data: str
+    @type attributes: list
+    '''
+    rval = ''
+    
+    groups = re_itemattr.search(data)
+    if groups:
+        val = groups.group('type')
+        if val:
+            attrname = cleanstr(re_striptags.sub('', val).strip())
+            insertattribute(attrname)
+            attributes.append([attrname, 0, 0, 'NONE'])
+            
+        val = groups.group('armorweapon')
+        if val:
+            pass
+            
+        val = groups.group('desc')
+        if val:
+            rval = re_striptags.sub('', val).strip().replace('\s+', ' ')
+            
+        val = groups.group('effects')
+        if val:
+            pass
+            
+        val = groups.group('set')
+        if val:
+            pass
+            
+        val = groups.group('extras')
+        if val:
+            pass
+    else:
+        msg('ERROR: Something went wrong parsing item attributes')
+    return rval
 
 def dlimage(url, od):
     ''' Download an image at url
@@ -288,6 +339,18 @@ def dlimage(url, od):
     fd = open(os.path.join(directory, os.path.basename(url)), 'w')
     fd.write(readurl(url, od, 30))
     fd.close()
+
+def linkitemattribute(ats, itemid, attribute, minv, maxv, typev):
+    ''' Link an item and an attribute
+    @type ats: multiprocessing.Queue
+    @type itemid: str
+    @type attribute: str
+    @type minv: float
+    @type maxv: float
+    @type typev: str
+    '''
+    msg('Pushing to itemattribute queue(size %d)' % ats.qsize())
+    ats.put((int(itemid), float(minv), float(maxv), unicode(typev), unicode(attribute)))
 
 def linkitemsubcategory(itemid, subcategory):
     ''' Link an item and a subcategory
@@ -502,7 +565,20 @@ def initdb(db):
     '''CREATE TABLE attribute(
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE
-    )''')    
+    )''')
+    
+    # Item-Attribute
+    cursor.execute(
+    '''CREATE TABLE itemattribute(
+    itemid INTEGER,
+    attributeid INTEGER,
+    min REAL,
+    max REAL,
+    type TEXT,
+    FOREIGN KEY(itemid) REFERENCES item(id),
+    FOREIGN KEY(attributeid) REFERENCES attribute(id),
+    CHECK (type IN ("PLUS", "PCNT", "VALU", "NONE"))
+    )''')
     
     # Item-Subcategory
     cursor.execute(
@@ -544,10 +620,12 @@ def execdelayed():
     Ex: crafts may be parsed before items, delay the craft til after items are added
     '''
     statements = ('INSERT OR IGNORE INTO craft SELECT id, ?, ?, ?, ? FROM item WHERE name = ?',
-                  'INSERT OR IGNORE INTO craftmaterial SELECT ?, id, ? FROM item WHERE url = ?')
+                  'INSERT OR IGNORE INTO craftmaterial SELECT ?, id, ? FROM item WHERE url = ?',
+                  'INSERT OR IGNORE INTO itemattribute SELECT ?, id, ?, ?, ? FROM attribute WHERE name = ?')
     
     msg('%d delayed craft statements' % craftstatements.qsize())
     msg('%d delayed material statements' % craftmaterialstatements.qsize())
+    msg('%d delayed itemattribute statements' % attributestatements.qsize())
     cursor = db.cursor()
     while(not craftstatements.empty()):
         data = craftstatements.get()
@@ -556,6 +634,10 @@ def execdelayed():
     while(not craftmaterialstatements.empty()):
         data = craftmaterialstatements.get()
         cursor.execute(statements[1], data)
+        
+    while(not attributestatements.empty()):
+        data = attributestatements.get()
+        cursor.execute(statements[2], data)
     db.commit() 
     cursor.close()    
 
