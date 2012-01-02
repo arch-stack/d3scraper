@@ -1,16 +1,20 @@
 #!/usr/bin/python
 import os, urllib2, sqlite3, multiprocessing, StringIO, gzip, urllib, socket
 from time import time
+from lxml import etree
 
 class d3scraper(object):
     ROOTURL = 'http://us.battle.net'
     D3ITEMPAGE = '%s/d3/en/item/' % ROOTURL
     TIMEOUT = 15
+    NSREMOVE = 'xmlns="http://www.w3.org/1999/xhtml"'
+    NUMPROC = 24
     
     db = None
     dblock = multiprocessing.Lock()
     basetime = 0
     directory = ''
+    pool = None
     
     badchars = {u'\u2019': '\'', u'\u2013': '-'}
     
@@ -33,7 +37,9 @@ class d3scraper(object):
 
     def scrape(self):
         ''' Begin the scraping process
-        '''      
+        '''
+        
+        self.pool = multiprocessing.Pool(self.NUMPROC)
         self.opener = self.makeod()
         
         self.directory = '%d-%s' % (self.basetime, os.getpid())
@@ -46,6 +52,8 @@ class d3scraper(object):
             db = sqlite3.connect(filename)
             self.initdb(db)
             
+            self.pool.join()
+            
             self.msg('Closing db')
             db.close()
             
@@ -53,6 +61,33 @@ class d3scraper(object):
         except Exception as e:
             self.msg('Error %s' % e.message)
         
+    def parsecategories(self, text):
+        cats = []
+        
+        xml = etree.fromstring(text)
+        for element in xml.xpath('//div[@id="equipment"]/div'):
+            name = element.xpath('h3[@class="category "]')[0].text
+            cats.append((name, etree.tostring(element)))
+        
+        return cats
+    
+    def parsesubcategories(self, text):
+        subcats = []
+        
+        xml = etree.fromstring(text)
+        for element in xml.xpath('//div[@class="box"]'):
+            subcategory = element.xpath('h4[@class="subcategory "]')
+            subcatlist = []
+            if len(subcategory):
+                subcatlist.append(subcategory[0].text.strip())
+            
+            for a in element.xpath('.//a'):
+                subcatlist.append(a.text.strip())
+                url = a.attrib['href']
+                
+                subcats.append((url, subcatlist, etree.tostring(element)))
+
+        return subcats
     
     def dlimage(self, url, od):
         ''' Download an image at url

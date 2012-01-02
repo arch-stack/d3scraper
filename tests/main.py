@@ -18,6 +18,33 @@ class Testd3scraper(unittest.TestCase):
         od = self.d3.makeod()
         self.assertTrue(od, 'OD was not created')
         self.assertEqual(od.open('http://google.ca').getcode(), 200, 'OD could not access google')
+        
+    def test_parsecategories(self):
+        fd = open('data/categories.html', 'r')
+        data = fd.read()
+        fd.close()
+        
+        res = self.d3.parsecategories(data)
+        
+        self.assertEqual(len(res), 3, 'Wrong number of categories %d' % len(res))
+        self.assertEqual(res[0][0], 'Armor', 'First category\'s text is wrong %s' % res[0][0])
+        
+    def test_parsesubcategories(self):
+        fd = open('data/categories.html', 'r')
+        data = fd.read()
+        fd.close()
+        
+        res = self.d3.parsesubcategories(data)
+        
+        self.assertEqual(len(res), 52, 'Wrong number of subcategories found %d' % len(res))
+                
+        for subcat in res:
+            self.assertNotEqual(subcat[0], '', 'URL is blank')
+            self.assertTrue(len(subcat[1]) > 0, 'No subcategories on a subcategory')
+            
+        self.assertEqual(res[0][1][0], 'Head', 'First subcategory\' primary subcategory is wrong %s' % res[0][1][0])
+        self.assertEqual(res[0][1][1], 'Helms', 'First subcategory\' secondary subcategory is wrong %s' % res[0][1][1])
+                
 
 class TestDB(unittest.TestCase):
     def setUp(self):
