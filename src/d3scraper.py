@@ -89,6 +89,18 @@ class d3scraper(object):
 
         return subcats
     
+    def parsesubcategory(self, text):
+        items = []
+        
+        xml = etree.fromstring(text)
+        items.append(xml.xpath('//div[@class="browse-right"]/div[@class="page-header"]/div[@class="desc"]')[0].text.strip())
+        
+        items.append([])
+        for element in xml.xpath('//div[@id="table-items"]//tbody//div[@class="item-details-icon"]//a'):
+            items[1].append(element.attrib['href'])
+        
+        return items
+    
     def dlimage(self, url, od):
         ''' Download an image at url
         @type url: str

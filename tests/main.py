@@ -45,6 +45,16 @@ class Testd3scraper(unittest.TestCase):
         self.assertEqual(res[0][1][0], 'Head', 'First subcategory\' primary subcategory is wrong %s' % res[0][1][0])
         self.assertEqual(res[0][1][1], 'Helms', 'First subcategory\' secondary subcategory is wrong %s' % res[0][1][1])
                 
+    def test_parsesubcategory(self):
+        fd = open('data/subcategory.html', 'r')
+        data = fd.read()
+        fd.close()
+        
+        res = self.d3.parsesubcategory(data)
+        
+        self.assertEqual(res[0], 'Helms have a common enough purpose: to protect the vulnerable, fleshy parts of the head from skull cracks, and make gouging eyes out a bit harder. Sturdier helms can weigh quite a bit in exchange for providing ample protection.', 'Description is incorrect')
+        self.assertEqual(len(res[1]), 43, 'Incorrect number of items found %d' % len(res[1]))
+
 
 class TestDB(unittest.TestCase):
     def setUp(self):
