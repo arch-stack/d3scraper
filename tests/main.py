@@ -44,7 +44,7 @@ class Testd3scraper(unittest.TestCase):
             
         self.assertEqual(res[0][1][0], 'Head', 'First subcategory\' primary subcategory is wrong %s' % res[0][1][0])
         self.assertEqual(res[0][1][1], 'Helms', 'First subcategory\' secondary subcategory is wrong %s' % res[0][1][1])
-                
+
     def test_parsesubcategory(self):
         fd = open('data/subcategory.html', 'r')
         data = fd.read()

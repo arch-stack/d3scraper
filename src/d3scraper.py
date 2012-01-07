@@ -48,14 +48,13 @@ class d3scraper(object):
         
         try:
             self.msg('Starting up')
-            global db
-            db = sqlite3.connect(filename)
-            self.initdb(db)
+            self.db = sqlite3.connect(filename)
+            self.initdb(self.db)
             
             self.pool.join()
             
             self.msg('Closing db')
-            db.close()
+            self.db.close()
             
             self.msg('Finished\t\t\tDB file is %s' % filename)
         except Exception as e:
@@ -128,10 +127,10 @@ class d3scraper(object):
         @type subcategory: str
         '''
         self.dblock.acquire()
-        cursor = db.cursor()
+        cursor = self.db.cursor()
         cursor.execute('INSERT OR IGNORE INTO itemsubcategory SELECT ?, id FROM subcategory WHERE name = ?', 
                        (int(itemid), unicode(subcategory)))
-        db.commit() 
+        self.db.commit() 
         cursor.close()    
         self.dblock.release()
     
@@ -167,11 +166,11 @@ class d3scraper(object):
         @type url: str
         '''
         self.dblock.acquire()
-        cursor = db.cursor()
+        cursor = self.db.cursor()
         cursor.execute('INSERT OR IGNORE INTO item SELECT NULL, ?, ?, ?, id, ?, ? FROM category WHERE name = ?', 
                        (unicode(name), unicode(desc), unicode(image), int(level), unicode(url), unicode(category)))
         rval = cursor.lastrowid
-        db.commit() 
+        self.db.commit() 
         cursor.close()    
         self.dblock.release()
         
@@ -183,11 +182,11 @@ class d3scraper(object):
         @type desc: str
         '''
         self.dblock.acquire()
-        cursor = db.cursor()
+        cursor = self.db.cursor()
         cursor.execute('INSERT OR IGNORE INTO subcategory VALUES(NULL, ?, ?)', 
                        (unicode(name), unicode(desc)))
         rval = cursor.lastrowid
-        db.commit() 
+        self.db.commit() 
         cursor.close()    
         self.dblock.release()
         
@@ -198,11 +197,11 @@ class d3scraper(object):
         @type name: str
         '''
         self.dblock.acquire()
-        cursor = db.cursor()
+        cursor = self.db.cursor()
         cursor.execute('INSERT OR IGNORE INTO attribute VALUES(NULL, ?)', 
                        (unicode(name),))
         rval = cursor.lastrowid
-        db.commit() 
+        self.db.commit() 
         cursor.close()    
         self.dblock.release()
         
@@ -222,7 +221,7 @@ class d3scraper(object):
         '''
         requestheaders = {}
         data = ''
-        responseheaders = []
+        responseheaders = {}
         
         while(True):
             self.msg('Requesting: %s' % url)
