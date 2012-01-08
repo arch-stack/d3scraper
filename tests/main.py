@@ -54,7 +54,24 @@ class Testd3scraper(unittest.TestCase):
         
         self.assertEqual(res[0], 'Helms have a common enough purpose: to protect the vulnerable, fleshy parts of the head from skull cracks, and make gouging eyes out a bit harder. Sturdier helms can weigh quite a bit in exchange for providing ample protection.', 'Description is incorrect')
         self.assertEqual(len(res[1]), 43, 'Incorrect number of items found %d' % len(res[1]))
+        
+    def test_parseitem(self):
+        fd = open('data/item.html', 'r')
+        data = fd.read()
+        fd.close()
+        
+        res = self.d3.parseitem(data)
 
+        self.assertEqual(res[0][0], 'Leather Hood', 'Item name doesn\'t match')
+        self.assertEqual(res[0][1], 3, 'Item required level doesn\'t match')
+        
+        self.assertEqual(len(res[1]), 1, 'Incorrect number of salvage types: %s' % len(res[1]))
+        self.assertEqual(res[1][0][0], 'http://us.media.blizzard.com/d3/icons/items/small/crafting_tier_01a_demonhunter_male.png', 'Incorrect salvage url: %s' % res[1][0][0])
+        self.assertEqual(res[1][0][1], 1, 'Incorrect salvage quantity')
+        
+        self.assertEqual(len(res[2]), 5, 'Incorrect number of item images')
+        self.assertEqual(res[2][0][0], 'Barbarian', 'Incorrect item image type')
+        self.assertEqual(res[2][0][1], 'http://us.media.blizzard.com/d3/icons/items/large/helm_002_barbarian_male.png', 'Incorrect item image url')
 
 class TestDB(unittest.TestCase):
     def setUp(self):

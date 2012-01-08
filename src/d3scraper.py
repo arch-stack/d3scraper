@@ -100,6 +100,26 @@ class d3scraper(object):
         
         return items
     
+    def parseitem(self, text):
+        item = [[], [], []]
+        
+        xml = etree.fromstring(text)
+        item[0].append(xml.xpath('//div[@class="detail-text"]/h2')[0].text.strip())
+        item[0].append(int(xml.xpath('//span[@class="number circle"]/span')[0].text.strip()))
+        
+        for element in xml.xpath('//div[@class="section-body"]//span[@class="icon-item-inner icon-item-square"]'):
+            url = element.attrib['style'][len('background-image: url('): -2]
+            count = int(element.xpath('.//span[@class="no"]')[0].text)
+            
+            item[1].append((url, count))
+            
+        for element in xml.xpath('//div[@class="page-section item-appearance"]//li'):
+            itype = element.xpath('.//a')[0].text.strip()
+            url = element.xpath('.//span[@class="icon-item-inner icon-item-default"]')[0].attrib['style'][len('background-image: url('): -2]
+            item[2].append((itype, url))
+        
+        return item
+    
     def dlimage(self, url, od):
         ''' Download an image at url
         @type url: str
