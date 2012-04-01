@@ -2,11 +2,14 @@ d3scraper
 ---------
 
 ###Use
-1. Output of the scrape will be in the mySQL server specified in the config. The DB name will be based on the time and process ID
-1. Images will be dumped to a local folder
+1. Run `scrapy crawl d3`
+1. Output of the scrape will be in the mySQL server and database specified in the config.
 
 ###Purpose
 To pull all items and their relevant information from the diablo3 website for any use in an easy to use format.
+
+###Configuration
+Modify the `src/d3/d3/config.py` file
 
 ###Versions
 0.4: Changed my mind of things again. Word of a D3 API was out (but I wasn't sure if it was real or not). It may include items but from what I've read it's limited to profile data. This means there might be no items so I will start on the scraping again. This time around I am going to use a scraping framework. 
