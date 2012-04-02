@@ -1,5 +1,5 @@
 class Config:
-    mysqlserver = ''
-    mysqldatabase = ''
-    mysqlusername = ''
-    mysqlpassword = ''
+    mysqlserver = 'localhost'
+    mysqldatabase = 'd3scrape'
+    mysqlusername = 'd3'
+    mysqlpassword = 'd3'

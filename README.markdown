@@ -2,6 +2,8 @@ d3scraper
 ---------
 
 ###Use
+1. Run `src/d3/d3/setup.py`
+1. Go in to the `src/d3` directory
 1. Run `scrapy crawl d3`
 1. Output of the scrape will be in the mySQL server and database specified in the config.
 
