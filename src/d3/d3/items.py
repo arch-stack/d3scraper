@@ -6,3 +6,5 @@ class TypeItem(Item):
     name = Field()
     url = Field()
     
+class ItemItem(Item):
+    pass
