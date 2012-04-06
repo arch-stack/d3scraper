@@ -9,19 +9,19 @@ class ItemSpider(CrawlSpider):
     name = 'Item'
     allowed_domains = ['battle.net']
     start_urls = []
-#    rules = (Rule(
-#              SgmlLinkExtractor(
-#                allow = ('/d3/en/item/',), 
-#                deny = (),
-#                restrict_xpaths = ('//div[@class="table db-table db-table-padded"]//tr//*[@class="item-details-icon"]',),
-#                tags = ('a',)
-#              ), 
-#             callback = 'parse_item')
-#             ,)
-    #Won't run without this for some reason!
-    _rules = ()
+    rules = (Rule(
+              SgmlLinkExtractor(
+                allow = ('/d3/en/item/',), 
+                deny = (),
+                restrict_xpaths = ('//div[@class="table db-table db-table-padded"]//tr//*[@class="item-details-icon"]',),
+                tags = ('a',)
+              ), 
+             callback = 'parse_item')
+             ,)
     
     def __init__(self):
+        CrawlSpider.__init__(self)
+        
         db = MySQLdb.connect(host = Config.mysqlserver, user = Config.mysqlusername, 
                              passwd = Config.mysqlpassword, db = Config.mysqldatabase)
         cursor = db.cursor()
