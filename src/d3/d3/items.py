@@ -7,4 +7,16 @@ class TypeItem(Item):
     url = Field()
     
 class ItemItem(Item):
-    pass
+    category = Field()
+    subcategory = Field()
+    name = Field()
+    itemtype = Field()
+    level = Field()
+    imgbarb = Field()
+    imgdh = Field()
+    imgmonk = Field()
+    imgwd = Field()
+    imgwizard = Field()
+    stats = Field()
+    effects = Field()
+    extras = Field()
