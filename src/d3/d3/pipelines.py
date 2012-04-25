@@ -16,7 +16,7 @@ class TypeCleanerPipeline(object):
 
 class ItemCleanerPipeline(object):
     def __init__(self):
-        self.stripre = re.compile(r'<[^>]*>', re.MULTILINE)
+        self.stripre = re.compile(r'<[^>]*?>', re.MULTILINE)
     
     def process_item(self, item, spider):
         if isinstance(item, ItemItem) and isinstance(spider, ItemSpider):
@@ -32,11 +32,19 @@ class ItemCleanerPipeline(object):
             item['imgwd'] = self.__parseimg(item['imgwd'])
             item['imgwizard'] = self.__parseimg(item['imgwizard'])
             
-#            item['stats'] = self.stripre.sub(item['stats'], '')
-#            item['effects'] = self.stripre.sub(item['effects'], '')
-#            item['extras'] = self.stripre.sub(item['extras'], '')
+            item['stats'] = self.__parsedetails(item['stats'])
+            item['effects'] = self.__parsedetails(item['effects'])
+            item['extras'] = self.__parsedetails(item['extras'])
         
         return item
+
+    def __parsedetails(self, data):
+        newdata = []
+        
+        for item in data:
+            newdata.append(self.stripre.sub('', item))
+        
+        return newdata
 
     def __parseimg(self, item):
         rval = ''
