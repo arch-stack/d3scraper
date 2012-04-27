@@ -78,6 +78,7 @@ class MySQLPipeline(object):
     
     def process_item(self, item, spider):
         if isinstance(spider, TypeSpider) and isinstance(item, TypeItem):
+            # Store types to scrape in the ItemSpider
             cursor = self.db.cursor()
             cursor.execute('''
                 INSERT INTO foundtypes
@@ -88,4 +89,7 @@ class MySQLPipeline(object):
             )
             self.db.commit()
             cursor.close()
+        elif isinstance(spider, ItemSpider) and isinstance(item, ItemItem):
+            # Store an item
+            pass
         return item

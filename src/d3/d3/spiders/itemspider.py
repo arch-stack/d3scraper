@@ -44,6 +44,7 @@ class ItemSpider(CrawlSpider):
         hxs = HtmlXPathSelector(response)
         
         item = ItemItem()
+        item['url'] = response.url
         
         content = hxs.select('//div[@class="body-bot"]')
         item['category'] = content.select('.//h2[@class="header "]/a/text()').extract()

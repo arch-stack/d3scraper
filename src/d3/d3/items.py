@@ -20,3 +20,4 @@ class ItemItem(Item):
     stats = Field()
     effects = Field()
     extras = Field()
+    url = Field()
