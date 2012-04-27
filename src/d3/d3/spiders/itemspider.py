@@ -62,11 +62,21 @@ class ItemSpider(CrawlSpider):
             item['imgwd'] = icons[3]
             item['imgwizard'] = icons[4]
         else:
-            item['imgbarb'] = ''
-            item['imgdh'] = ''
-            item['imgmonk'] = ''
-            item['imgwd'] = ''
-            item['imgwizard'] = ''
+            # Need to use the one image for all
+            icon = content.select('//*[@class="icon-item-inner icon-item-default"]/@style').extract()
+            if len(icon) > 0:
+                item['imgbarb'] = icon[0]
+                item['imgdh'] = icon[0]
+                item['imgmonk'] = icon[0]
+                item['imgwd'] = icon[0]
+                item['imgwizard'] = icon[0]
+            else:
+                item['imgbarb'] = ''
+                item['imgdh'] = ''
+                item['imgmonk'] = ''
+                item['imgwd'] = ''
+                item['imgwizard'] = ''
+
             
         item['stats'] = content.select('.//ul[@class="item-armor-weapon"]/li').extract()
         item['effects'] = content.select('.//ul[@class="item-before-effects"]/li').extract()
