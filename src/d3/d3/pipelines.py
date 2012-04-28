@@ -4,6 +4,7 @@ import MySQLdb
 from d3.config import Config
 from d3.spiders.itemspider import ItemSpider
 import re
+import sys
 
 class TypeCleanerPipeline(object):
     def process_item(self, item, spider):
@@ -74,7 +75,8 @@ class MySQLPipeline(object):
     
     def __init__(self):
         self.db = MySQLdb.connect(host = Config.mysqlserver, user = Config.mysqlusername, 
-                             passwd = Config.mysqlpassword, db = Config.mysqldatabase)
+                             passwd = Config.mysqlpassword, db = Config.mysqldatabase,
+                             use_unicode = True, charset='utf8')
     
     def process_item(self, item, spider):
         if isinstance(spider, TypeSpider) and isinstance(item, TypeItem):
@@ -91,5 +93,49 @@ class MySQLPipeline(object):
             cursor.close()
         elif isinstance(spider, ItemSpider) and isinstance(item, ItemItem):
             # Store an item
-            pass
+            cursor = self.db.cursor()
+            
+            cursor.execute('''
+                INSERT INTO items
+                (category, subcategory, name, itemtype, level, 
+                    imgbarb, imgdh, imgmonk, imgwd, imgwizard, url)
+                VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''',
+            (item['category'], item['subcategory'], item['name'], item['itemtype'], int(item['level']), 
+             item['imgbarb'], item['imgdh'], item['imgmonk'], item['imgwd'], item['imgwizard'], 
+             item['url'])
+            )
+            
+            itemid = self.db.insert_id()
+            
+            for stat in item['stats']: 
+                cursor.execute('''
+                    INSERT INTO details
+                    (detail, itemid, type)
+                    VALUES(%s, %s, 'stat')
+                ''',
+                (stat, itemid)
+                )
+            
+            for effect in item['effects']: 
+                cursor.execute('''
+                    INSERT INTO details
+                    (detail, itemid, type)
+                    VALUES(%s, %s, 'effect')
+                ''',
+                (effect, itemid)
+                )
+            
+            for extra in item['extras']: 
+                cursor.execute('''
+                    INSERT INTO details
+                    (detail, itemid, type)
+                    VALUES(%s, %s, 'extra')
+                ''',
+                (extra, itemid)
+                )
+            
+            self.db.commit()
+            cursor.close()
+            
         return item

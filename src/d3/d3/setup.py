@@ -14,10 +14,10 @@ def setup():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS foundtypes (
             id INT AUTO_INCREMENT,
-            category NVARCHAR(100),
-            subcategory NVARCHAR(100),
-            name NVARCHAR(100),
-            url NVARCHAR(200),
+            category VARCHAR(100) UNICODE,
+            subcategory VARCHAR(100) UNICODE,
+            name VARCHAR(100) UNICODE,
+            url VARCHAR(200) UNICODE,
             PRIMARY KEY(id)
         )
         ENGINE = InnoDB,
@@ -27,17 +27,17 @@ def setup():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS items (
             id INT AUTO_INCREMENT,
-            category NVARCHAR(100),
-            subcategory NVARCHAR(100),
-            name NVARCHAR(100),
-            itemtype NVARCHAR(100),
+            category VARCHAR(100) UNICODE,
+            subcategory VARCHAR(100) UNICODE,
+            name VARCHAR(100) UNICODE,
+            itemtype VARCHAR(100) UNICODE,
             level INT UNSIGNED,
-            imgbarb NVARCHAR(250),
-            imgdh NVARCHAR(250),
-            imgmonk NVARCHAR(250),
-            imgwd NVARCHAR(250),
-            imgwizard NVARCHAR(250),
-            url NVARCHAR(250),
+            imgbarb VARCHAR(250) UNICODE,
+            imgdh VARCHAR(250) UNICODE,
+            imgmonk VARCHAR(250) UNICODE,
+            imgwd VARCHAR(250) UNICODE,
+            imgwizard VARCHAR(250) UNICODE,
+            url VARCHAR(250) UNICODE,
             PRIMARY KEY(id)
         )
         ENGINE = InnoDB,
@@ -47,7 +47,7 @@ def setup():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS details (
             id INT AUTO_INCREMENT,
-            detail NVARCHAR(2000),
+            detail VARCHAR(2000) UNICODE,
             itemid INT,
             type ENUM('stat', 'effect', 'extra'),
             PRIMARY KEY(id),
