@@ -4,7 +4,6 @@ import MySQLdb
 from d3.config import Config
 from d3.spiders.itemspider import ItemSpider
 import re
-import sys
 
 class TypeCleanerPipeline(object):
     def process_item(self, item, spider):
